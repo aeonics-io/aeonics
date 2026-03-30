@@ -1,4 +1,4 @@
-## Plugin: "aeonics.http"
+## Plugin: "aeonics.git"
 
 This Aeonics software plugin provides GIT server capabilities and defines
 high level endpoints for HTTP transport.
