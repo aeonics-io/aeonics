@@ -62,10 +62,7 @@ public class GitEndpoints
 	private static User.Type authenticate(Data request)
 	{
 		if( request.get("headers").isEmpty("authorization") )
-		{
-			throw new HttpException(401, Data.map()
-				.put("headers", Data.map().put("WWW-Authenticate", "Basic realm=\"restricted\"")));
-		}
+			return null;
 
 		String b64 = request.get("headers").asString("authorization");
 		if( !b64.startsWith("Basic ") ) throw new HttpException(403, "Invalid authentication type");
@@ -80,31 +77,6 @@ public class GitEndpoints
 		if( !t.user().login().equals(raw[0]) ) throw new HttpException(403, "Token mismatch");
 
 		return t.user();
-	}
-
-	/**
-	 * Extracts the repo name from the request URL path.
-	 * Expected URL format: {root}/{repoName}/info/refs or {root}/{repoName}/git-upload-pack etc.
-	 *
-	 * @param url the full request URL path
-	 * @param root the configured git root prefix
-	 * @param suffix the expected path suffix (e.g. "/info/refs", "/git-upload-pack")
-	 * @return the repo name
-	 * @throws HttpException if the URL does not match the expected pattern
-	 */
-	private static String extractRepoName(String url, String root, String suffix)
-	{
-		// Strip root prefix and suffix to get repo name
-		if( !url.startsWith(root) || !url.endsWith(suffix) )
-			throw new HttpException(404, "Not found");
-
-		String repoName = url.substring(root.length(), url.length() - suffix.length());
-		// Remove leading/trailing slashes
-		while( repoName.startsWith("/") ) repoName = repoName.substring(1);
-		while( repoName.endsWith("/") ) repoName = repoName.substring(0, repoName.length() - 1);
-
-		if( repoName.isEmpty() ) throw new HttpException(404, "No repository specified");
-		return repoName;
 	}
 
 	/**
@@ -133,14 +105,25 @@ public class GitEndpoints
 				.description("The requested service: 'git-upload-pack' or 'git-receive-pack'")
 				.format(Parameter.Format.TEXT)
 				.optional(false))
+			.add(new Parameter("repo")
+				.summary("Repository")
+				.description("The target repository")
+				.format(Parameter.Format.TEXT)
+				.optional(false))
 			.create()
 			.<Endpoint.Rest.Type>cast()
 			.process((data, user, request) ->
 			{
 				user = authenticate(request.content());
+				if( user == null )
+				{
+					return Data.map()
+						.put("isHttpResponse", true)
+						.put("code", 401)
+						.put("headers", Data.map().put("WWW-Authenticate", "Basic realm=\"restricted\""));
+				}
 
-				String url = request.content().asString("url");
-				String repoName = extractRepoName(url, root, "/info/refs");
+				String repoName = data.asString("repo");
 				GitRepo.Type repo = resolveRepo(repoName);
 				Storage.Type store = repo.store();
 				String repoRoot = repo.root();
@@ -172,7 +155,7 @@ public class GitEndpoints
 						.put("mime", data.asString("service").equals("git-upload-pack") ? "application/x-git-upload-pack-advertisement" : "application/x-git-receive-pack-advertisement");
 				}
 			})
-			.url(root + "/*/info/refs")
+			.url(root + "/{repo}/info/refs")
 			.method("GET");
 	}
 
@@ -182,14 +165,25 @@ public class GitEndpoints
 			.template()
 			.summary("Returns GIT objects")
 			.description("This endpoint is part of the smart http git protocol and returns the response to a fetch/pull command")
+			.add(new Parameter("repo")
+				.summary("Repository")
+				.description("The target repository")
+				.format(Parameter.Format.TEXT)
+				.optional(false))
 			.create()
 			.<Endpoint.Rest.Type>cast()
 			.process((data, user, request) ->
 			{
 				user = authenticate(request.content());
-
-				String url = request.content().asString("url");
-				String repoName = extractRepoName(url, root, "/git-upload-pack");
+				if( user == null )
+				{
+					return Data.map()
+						.put("isHttpResponse", true)
+						.put("code", 401)
+						.put("headers", Data.map().put("WWW-Authenticate", "Basic realm=\"restricted\""));
+				}
+				
+				String repoName = data.asString("repo");
 				GitRepo.Type repo = resolveRepo(repoName);
 				Storage.Type store = repo.store();
 				String repoRoot = repo.root();
@@ -281,7 +275,7 @@ public class GitEndpoints
 						.put("mime", "application/x-git-upload-pack-result");
 				}
 			})
-			.url(root + "/*/git-upload-pack")
+			.url(root + "/{repo}/git-upload-pack")
 			.method("POST");
 	}
 
@@ -291,14 +285,25 @@ public class GitEndpoints
 			.template()
 			.summary("Accepts GIT objects")
 			.description("This endpoint is part of the smart http git protocol and accepts objects for a push command")
+			.add(new Parameter("repo")
+				.summary("Repository")
+				.description("The target repository")
+				.format(Parameter.Format.TEXT)
+				.optional(false))
 			.create()
 			.<Endpoint.Rest.Type>cast()
 			.process((data, user, request) ->
 			{
 				user = authenticate(request.content());
+				if( user == null )
+				{
+					return Data.map()
+						.put("isHttpResponse", true)
+						.put("code", 401)
+						.put("headers", Data.map().put("WWW-Authenticate", "Basic realm=\"restricted\""));
+				}
 
-				String url = request.content().asString("url");
-				String repoName = extractRepoName(url, root, "/git-receive-pack");
+				String repoName = data.asString("repo");
 				GitRepo.Type repo = resolveRepo(repoName);
 				Storage.Type store = repo.store();
 				String repoRoot = repo.root();
@@ -364,7 +369,7 @@ public class GitEndpoints
 						.put("mime", "application/x-git-receive-pack-result");
 				}
 			})
-			.url(root + "/*/git-receive-pack")
+			.url(root + "/{repo}/git-receive-pack")
 			.method("POST");
 	}
 }

@@ -303,6 +303,7 @@ public class ProtocolV1
 	{
 		Map<String, Tuple<String, String>> refs = new HashMap<>();
 		Map<Integer, Tuple<String, byte[]>> objects = new HashMap<>();
+		Map<String, Tuple<String, byte[]>> objectsBySha = new HashMap<>();
 		int pos = 0;
 
 		// === 1. Decode pkt-lines (refs)
@@ -370,12 +371,14 @@ public class ProtocolV1
 			}
 			else if( type == 7 )
 			{
-				// this is REF_DELTA
-				deltaBaseObject = Bare.object(
-					store,
-					root,
-					Bare.sha2hex(data, pos));
+				// this is REF_DELTA — base may be in this pack or in the repo
+				String baseSha = Bare.sha2hex(data, pos);
 				pos += 20;
+				deltaBaseObject = objectsBySha.get(baseSha);
+				if( deltaBaseObject == null )
+					deltaBaseObject = Bare.object(store, root, baseSha);
+				if( deltaBaseObject == null )
+					throw new IllegalArgumentException("REF_DELTA base object not found: " + baseSha);
 			}
 
 			int compressedStart = pos;
@@ -416,7 +419,17 @@ public class ProtocolV1
 					default: throw new IllegalArgumentException("Unsupported object type: " + type);
 				}
 
-				objects.put(startOfObject, Tuple.of(typeStr, bos.toByteArray()));
+				Tuple<String, byte[]> obj = Tuple.of(typeStr, bos.toByteArray());
+				objects.put(startOfObject, obj);
+				try
+				{
+					MessageDigest sha = MessageDigest.getInstance("SHA-1");
+					byte[] header = (typeStr + " " + obj.b.length + "\0").getBytes(StandardCharsets.UTF_8);
+					sha.update(header);
+					sha.update(obj.b);
+					objectsBySha.put(Bare.sha2hex(sha.digest()), obj);
+				}
+				catch(java.security.NoSuchAlgorithmException x) { /* SHA-1 always available */ }
 			}
 			catch(Exception e)
 			{

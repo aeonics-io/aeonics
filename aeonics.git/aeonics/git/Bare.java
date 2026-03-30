@@ -56,7 +56,7 @@ public class Bare
 {
 	private static final Set<String> objectTypes = Set.of("blob", "tree", "commit", "tag");
 
-	static class TreeEntry
+	public static class TreeEntry
 	{
 		public String mode;
 		public String name;
