@@ -51,6 +51,10 @@ public class Operations
 
 			String readme = "# Git Repository\n";
 			Bare.createFile(store, path, "README.md", readme.getBytes(StandardCharsets.ISO_8859_1), null, "Add README", null);
+
+			Bare.createFile(store, path, "www/index.html",
+				"<!DOCTYPE html>\n<html>\n<head><title>Welcome</title></head>\n<body>\n<h1>It works!</h1>\n</body>\n</html>\n".getBytes(StandardCharsets.ISO_8859_1),
+				null, "Add default page", null);
 		}
 	}
 
@@ -179,6 +183,101 @@ public class Operations
 
 				store.put(path, newSha);
 			}
+		}
+	}
+
+	/**
+	 * Flattens a bare Git repository to a single parentless commit containing the current HEAD tree.
+	 * All history is discarded. Existing clones will need to re-clone after this operation.
+	 *
+	 * <p>The operation copies reachable objects to a temporary storage location, deletes the
+	 * repository, then restores only the necessary objects and creates a fresh commit.</p>
+	 *
+	 * @param store the storage backend
+	 * @param root the root path of the bare Git repository
+	 * @param tmp a temporary storage root (must be outside of {@code root})
+	 */
+	public static void flatten(Storage.Type store, String root, String tmp)
+	{
+		root = Storage.normalize(root);
+		tmp = Storage.normalize(tmp);
+		if( tmp.startsWith(root + "/") || root.startsWith(tmp + "/") || tmp.equals(root) )
+			throw new IllegalArgumentException("Temporary path must not overlap with repository root");
+
+		synchronized( store )
+		{
+			// Resolve HEAD branch and current tree
+			String head = store.getString(root + "/HEAD");
+			if( head == null || !head.startsWith("ref: ") )
+				throw new IllegalStateException("HEAD is not a symbolic ref: " + head);
+			String branch = Git.headBranch(head);
+
+			String treeSha = Bare.latestTree(store, root, branch);
+			if( treeSha == null )
+				throw new IllegalStateException("No tree found at HEAD");
+
+			// Collect all reachable object SHAs from the current tree
+			Set<String> reachable = new HashSet<>();
+			reachable.add(treeSha);
+			Map<String, String> entries = Bare.listRecursive(store, root, treeSha, null);
+			reachable.addAll(entries.values());
+
+			// Copy reachable objects to temporary location
+			for( String sha : reachable )
+			{
+				byte[] raw = store.get(Bare.sha2path(root, sha));
+				if( raw == null )
+					throw new IllegalStateException("Missing object during reset: " + sha);
+				store.put(Bare.sha2path(tmp, sha), raw);
+			}
+
+			try
+			{
+				// Delete entire repository
+				store.remove(root);
+
+				// Restore objects from temporary location
+				for( String sha : reachable )
+				{
+					byte[] raw = store.get(Bare.sha2path(tmp, sha));
+					if( raw == null )
+						throw new IllegalStateException("Missing object in temporary store: " + sha);
+					store.put(Bare.sha2path(root, sha), raw);
+				}
+
+				// Recreate repository structure
+				store.put(root + "/HEAD", "ref: refs/heads/" + branch + "\n");
+				store.put(root + "/config", "[core]\n"
+					+ "\trepositoryformatversion = 0\n"
+					+ "\tfilemode = true\n"
+					+ "\tbare = true\n");
+				store.put(root + "/refs/heads/" + branch, "0000000000000000000000000000000000000000");
+
+				// Create new parentless commit with the existing tree
+				Bare.commit(store, root, treeSha, null, "Repository compacted", branch);
+			}
+			finally
+			{
+				// Clean up temporary location
+				store.remove(tmp);
+			}
+		}
+	}
+
+	/**
+	 * Resets a bare Git repository by wiping all content and reinitializing it.
+	 * All history and files are permanently destroyed. Existing clones will need to re-clone.
+	 *
+	 * @param store the storage backend
+	 * @param root the root path of the bare Git repository
+	 */
+	public static void reset(Storage.Type store, String root)
+	{
+		root = Storage.normalize(root);
+		synchronized( store )
+		{
+			store.remove(root);
+			init(store, root);
 		}
 	}
 
