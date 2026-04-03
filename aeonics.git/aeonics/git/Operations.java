@@ -46,15 +46,6 @@ public class Operations
 				+ "\tfilemode = true\n"
 				+ "\tbare = true\n");
 			store.put(path + "/refs/heads/main", "0000000000000000000000000000000000000000");
-
-			Bare.commit(store, path, Bare.object(store, path, "tree", new byte[0]), null, "Initialize repository", "main");
-
-			String readme = "# Git Repository\n";
-			Bare.createFile(store, path, "README.md", readme.getBytes(StandardCharsets.ISO_8859_1), null, "Add README", null);
-
-			Bare.createFile(store, path, "www/index.html",
-				"<!DOCTYPE html>\n<html>\n<head><title>Welcome</title></head>\n<body>\n<h1>It works!</h1>\n</body>\n</html>\n".getBytes(StandardCharsets.ISO_8859_1),
-				null, "Add default page", null);
 		}
 	}
 
