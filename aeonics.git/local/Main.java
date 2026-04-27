@@ -13,8 +13,8 @@ import aeonics.git.GitEndpoints;
 
 public class Main extends Plugin
 {
-	public String summary() { return "Aeonics Git v0.1"; }
-	public String description() { return "Git bare repository server"; }
+	public String summary() { return "Git v1.0.0"; }
+	public String description() { return "Aeonics GIT Server"; }
 
 	public void start()
 	{

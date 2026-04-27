@@ -1,0 +1,54 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.7",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-01-01T00:00:00Z",
+    "component": {
+      "type": "library",
+      "bom-ref": "aeonics-git",
+      "name": "aeonics-git",
+      "version": "1.0.0",
+      "description": "Aeonics GIT Server",
+      "supplier": {
+        "name": "Aeonics SRL",
+        "url": [ "https://aeonics.io" ]
+      },
+      "licenses": [
+        {
+          "license": {
+            "name": "Aeonics Commercial Software License (ACSL)"
+          }
+        }
+      ]
+    },
+    "manufacturer": {
+      "name": "Aeonics SRL",
+      "url": [ "https://aeonics.io" ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "aeonics-core",
+      "name": "aeonics-core",
+      "version": "1.0.0",
+      "description": "Aeonics Core System",
+      "scope": "required"
+    },
+	{
+      "type": "library",
+      "bom-ref": "aeonics-http",
+      "name": "aeonics-http",
+      "version": "1.0.0",
+      "description": "Aeonics HTTP Transport",
+      "scope": "required"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "aeonics-git",
+      "dependsOn": [ "aeonics-core", "aeonics-http" ]
+    }
+  ]
+}

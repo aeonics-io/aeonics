@@ -5,7 +5,9 @@ Please report security issues by sending an email to [our security team](mailto:
 
 ## Software Bill of Materials (SBOM)
 
-This plugin depends on `aeonics.boot`, `aeonics.core`, `aeonics.http` and any transient dependencies.
+The SBOM is provided in the `bom.json` file in CycloneDX format. It outlines the 
+dependencies and libraries used in the development of this framework, helping 
+users understand potential security implications.
 
 ---
 
