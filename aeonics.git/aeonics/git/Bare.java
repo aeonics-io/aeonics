@@ -806,7 +806,7 @@ public class Bare
 			if( !found )
 			{
 				String subtreeSha = rebuildTreeInsert(store, root, null, newBlobSha, parts);
-				entries.add(new TreeEntry("040000", name, subtreeSha));
+				entries.add(new TreeEntry("40000", name, subtreeSha));
 			}
 		}
 
@@ -833,7 +833,7 @@ public class Bare
 			if( !mode.equals("100644") && !mode.equals("100755") && !mode.equals("040000") && !mode.equals("40000") )
 				throw new IllegalArgumentException("Illegal tree object mode: " + mode);
 			i++; // skip space
-			if( mode.equals("40000") ) mode = "040000"; // some clients omit the leading zero
+			if( mode.equals("040000") ) mode = "40000"; // git writes directories as 40000, trees written by older versions use 040000
 
 			// =========== PARSE FILE NAME
 			mark = i;
@@ -1142,7 +1142,7 @@ public class Bare
 						List<TreeEntry> emptyEntries = new ArrayList<>();
 						add.add(Tuple.of(seg, emptyEntries));
 						// synthetic reference so we can continue walking
-						curEntries.add(new TreeEntry("040000", seg, "<pending>"));
+						curEntries.add(new TreeEntry("40000", seg, "<pending>"));
 					}
 					else
 					{
@@ -1265,7 +1265,7 @@ public class Bare
 					{
 						// write empty child dir
 						String newDirSha = writeTree(store, root, entriesHere);
-						parentEntriesAtLevel.add(new TreeEntry("040000", seg, newDirSha));
+						parentEntriesAtLevel.add(new TreeEntry("40000", seg, newDirSha));
 						// write parent to stabilize state (helps when bubbling later)
 						writeTree(store, root, parentEntriesAtLevel);
 						// descend into the new empty dir
@@ -1295,7 +1295,7 @@ public class Bare
 					int idx = findDirIndex(parentEntries, dirName);
 
 					if( idx < 0 )
-						parentEntries.add(new TreeEntry("040000", dirName, childSha));
+						parentEntries.add(new TreeEntry("40000", dirName, childSha));
 					else
 					{
 						TreeEntry e = parentEntries.get(idx);
@@ -1331,7 +1331,7 @@ public class Bare
 					String newChildName = newParts.get(longestCommonPrefix);
 					int idx = findDirIndex(lcaEntries, newChildName);
 					if( idx < 0 )
-						lcaEntries.add(new TreeEntry("040000", newChildName, updatedNewBranchChildSha));
+						lcaEntries.add(new TreeEntry("40000", newChildName, updatedNewBranchChildSha));
 					else {
 						TreeEntry e = lcaEntries.get(idx);
 						lcaEntries.set(idx, new TreeEntry(e.mode, e.name, updatedNewBranchChildSha));

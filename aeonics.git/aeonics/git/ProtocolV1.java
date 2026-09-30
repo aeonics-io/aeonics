@@ -5,12 +5,14 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.Inflater;
 
@@ -186,108 +188,137 @@ public class ProtocolV1
 		try
 		{
 			String match = result.a;
-			List<Tuple<String, byte[]>> objects = result.b;
 
-			ByteArrayOutputStream pack = new ByteArrayOutputStream();
-
-			try( DataOutputStream out = new DataOutputStream(pack) )
-			{
-				// Write packfile header
-				out.writeBytes("PACK");				// 4-byte signature
-				out.writeInt(2);					   // version 2
-				out.writeInt(objects.size());		  // number of objects
-
-				for( Tuple<String, byte[]> obj : objects )
-				{
-					String type = obj.a;
-					byte[] content = obj.b;
-					int typeCode;
-
-					switch (type)
-					{
-						case "commit": typeCode = 1; break;
-						case "tree":   typeCode = 2; break;
-						case "blob":   typeCode = 3; break;
-						case "tag":	typeCode = 4; break;
-						default: throw new IllegalArgumentException("Unsupported object type: " + type);
-					}
-
-					// Write object header: variable-length encoding
-					int size = content.length;
-					int first = (typeCode << 4) | (size & 0x0F);
-					size >>>= 4;
-					if (size == 0)
-						out.writeByte(first);
-					else
-					{
-						out.writeByte(first | 0x80);
-						while (true)
-						{
-							int next = size & 0x7F;
-							size >>>= 7;
-							if (size == 0)
-							{
-								out.writeByte(next);
-								break;
-							}
-							out.writeByte(next | 0x80);
-						}
-					}
-
-					// Compress content (zlib deflate)
-					ByteArrayOutputStream deflated = new ByteArrayOutputStream();
-					try (DeflaterOutputStream deflater = new DeflaterOutputStream(deflated))
-					{
-						deflater.write(content);
-					}
-
-					out.write(deflated.toByteArray());
-				}
-			}
-			catch (Exception e)
-			{
-				throw new RuntimeException("Failed to generate upload-pack response", e);
-			}
-
-			// Trailer: SHA-1 of entire packfile
-			MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
-			sha1.update(pack.toByteArray());
-			pack.write(sha1.digest());
-			byte[] packed = pack.toByteArray();
-
-			// ======================== START RESPONSE
-			pack.reset();
-
+			ByteArrayOutputStream prefix = new ByteArrayOutputStream();
 			if( match != null )
 			{
-				writePktLine(pack, "ACK " + match + " ready");
-				writePktLine(pack, "ACK " + match);
+				writePktLine(prefix, "ACK " + match + " ready");
+				writePktLine(prefix, "ACK " + match);
 			}
 			else
-				writePktLine(pack, "NAK");
+				writePktLine(prefix, "NAK");
 
-			final int MAX_PAYLOAD = 65515;
-			int off = 0;
-			while( off < packed.length )
-			{
-				int n = Math.min(MAX_PAYLOAD, packed.length - off);
-
-				// pkt-line length = 4 + 1(band) + n
-				int totalLen = 4 + 1 + n;
-				String lenHex = String.format("%04x", totalLen);
-				pack.write(lenHex.getBytes(StandardCharsets.US_ASCII));
-				pack.write(0x01); // band 1 = pack data
-				pack.write(packed, off, n);
-				off += n;
-			}
-
-			writeFlush(pack);
-			return pack.toByteArray();
+			return encodePackResponse(prefix.toByteArray(), result.b);
 		}
 		catch(Exception e)
 		{
 			throw new RuntimeException("Failed to generate upload-pack response", e);
 		}
+	}
+
+	/**
+	 * A byte buffer that exposes its backing array, so that the packfile can be framed without copying it first.
+	 */
+	private static class PackBuffer extends ByteArrayOutputStream
+	{
+		byte[] buffer() { return buf; }
+	}
+
+	/**
+	 * Encodes a list of Git objects as a packfile wrapped in side-band-64k, shared by both protocol versions.
+	 * <p>
+	 * The response is the prefix, then the packfile in band 1 frames, then a flush-pkt. The packfile is
+	 * the {@code PACK} signature, version 2, the object count, each object as a variable-length
+	 * type+size header followed by its zlib-compressed content, and a SHA-1 trailer.
+	 *
+	 * @param prefix the pkt-lines to send before the packfile
+	 * @param objects the Git objects (type, unwrapped content)
+	 * @return the full response bytes
+	 * @throws Exception if an object type is not supported or the packfile cannot be written
+	 */
+	static byte[] encodePackResponse(byte[] prefix, List<Tuple<String, byte[]>> objects) throws Exception
+	{
+		PackBuffer pack = new PackBuffer();
+		// the checksum is computed while writing so that the packfile is never copied to hash it
+		MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
+		Deflater deflater = new Deflater();
+
+		try( DataOutputStream out = new DataOutputStream(new DigestOutputStream(pack, sha1)) )
+		{
+			// Write packfile header
+			out.writeBytes("PACK");				// 4-byte signature
+			out.writeInt(2);					   // version 2
+			out.writeInt(objects.size());		  // number of objects
+
+			for( Tuple<String, byte[]> obj : objects )
+			{
+				String type = obj.a;
+				byte[] content = obj.b;
+				int typeCode;
+
+				switch (type)
+				{
+					case "commit": typeCode = 1; break;
+					case "tree":   typeCode = 2; break;
+					case "blob":   typeCode = 3; break;
+					case "tag":	typeCode = 4; break;
+					default: throw new IllegalArgumentException("Unsupported object type: " + type);
+				}
+
+				// Write object header: variable-length encoding
+				int size = content.length;
+				int first = (typeCode << 4) | (size & 0x0F);
+				size >>>= 4;
+				if (size == 0)
+					out.writeByte(first);
+				else
+				{
+					out.writeByte(first | 0x80);
+					while (true)
+					{
+						int next = size & 0x7F;
+						size >>>= 7;
+						if (size == 0)
+						{
+							out.writeByte(next);
+							break;
+						}
+						out.writeByte(next | 0x80);
+					}
+				}
+
+				// Compress content (zlib deflate) straight into the packfile.
+				// finish() rather than close() so that the packfile stream and the shared deflater stay open.
+				deflater.reset();
+				DeflaterOutputStream zip = new DeflaterOutputStream(out, deflater, 8192);
+				zip.write(content);
+				zip.finish();
+			}
+		}
+		finally
+		{
+			deflater.end();
+		}
+
+		// Trailer: SHA-1 of entire packfile
+		pack.write(sha1.digest());
+
+		// ======================== START RESPONSE
+		// frame the packfile directly into a response of the exact size
+		final int MAX_PAYLOAD = 65515;
+		int length = pack.size();
+		int frames = (length + MAX_PAYLOAD - 1) / MAX_PAYLOAD;
+		byte[] response = new byte[prefix.length + frames * 5 + length + 4];
+		System.arraycopy(prefix, 0, response, 0, prefix.length);
+		int pos = prefix.length;
+
+		byte[] packed = pack.buffer();
+		for( int off = 0; off < length; off += MAX_PAYLOAD )
+		{
+			int n = Math.min(MAX_PAYLOAD, length - off);
+
+			// pkt-line length = 4 + 1(band) + n
+			byte[] lenHex = String.format("%04x", 4 + 1 + n).getBytes(StandardCharsets.US_ASCII);
+			System.arraycopy(lenHex, 0, response, pos, 4);
+			response[pos + 4] = 0x01; // band 1 = pack data
+			System.arraycopy(packed, off, response, pos + 5, n);
+			pos += 5 + n;
+		}
+
+		// flush-pkt
+		byte[] flush = "0000".getBytes(StandardCharsets.US_ASCII);
+		System.arraycopy(flush, 0, response, pos, 4);
+		return response;
 	}
 
 	/**
@@ -434,6 +465,11 @@ public class ProtocolV1
 			catch(Exception e)
 			{
 				throw new IllegalArgumentException("Failed to inflate object: " + e.getMessage(), e);
+			}
+			finally
+			{
+				// release the native zlib stream now rather than whenever the GC gets to it
+				inf.end();
 			}
 		}
 

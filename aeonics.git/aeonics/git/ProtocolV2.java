@@ -1,17 +1,14 @@
 package aeonics.git;
 
 import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.zip.DeflaterOutputStream;
 
 import aeonics.http.HttpException;
 import aeonics.util.Tuples.Tuple;
@@ -342,93 +339,8 @@ public class ProtocolV2
 			}
 
 			// --- Done: build and send packfile ---
-			ByteArrayOutputStream pack = new ByteArrayOutputStream();
-
-			try( DataOutputStream data = new DataOutputStream(pack) )
-			{
-				// Write packfile header
-				data.writeBytes("PACK");          // 4-byte signature
-				data.writeInt(2);                 // version 2
-				data.writeInt(objects.size());    // number of objects
-
-				for( Tuple<String, byte[]> obj : objects )
-				{
-					String type = obj.a;
-					byte[] content = obj.b;
-					int typeCode;
-
-					switch (type)
-					{
-						case "commit": typeCode = 1; break;
-						case "tree":   typeCode = 2; break;
-						case "blob":   typeCode = 3; break;
-						case "tag":    typeCode = 4; break;
-						default: throw new IllegalArgumentException("Unsupported object type: " + type);
-					}
-
-					// Write object header: variable-length encoding
-					int size = content.length;
-					int first = (typeCode << 4) | (size & 0x0F);
-					size >>>= 4;
-					if( size == 0 )
-						data.writeByte(first);
-					else
-					{
-						data.writeByte(first | 0x80);
-						while( true )
-						{
-							int next = size & 0x7F;
-							size >>>= 7;
-							if( size == 0 )
-							{
-								data.writeByte(next);
-								break;
-							}
-							data.writeByte(next | 0x80);
-						}
-					}
-
-					// Compress content (zlib deflate)
-					ByteArrayOutputStream deflated = new ByteArrayOutputStream();
-					try( DeflaterOutputStream deflater = new DeflaterOutputStream(deflated) )
-					{
-						deflater.write(content);
-					}
-
-					data.write(deflated.toByteArray());
-				}
-			}
-			catch (Exception e)
-			{
-				throw new RuntimeException("Failed to generate fetch packfile", e);
-			}
-
-			// Trailer: SHA-1 of entire packfile so far
-			MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
-			sha1.update(pack.toByteArray());
-			pack.write(sha1.digest());
-			byte[] packed = pack.toByteArray();
-
-			// ======================== START RESPONSE
 			ProtocolV1.writePktLine(out, "packfile");
-
-			final int MAX_PAYLOAD = 65515;
-			int off = 0;
-			while( off < packed.length )
-			{
-				int n = Math.min(MAX_PAYLOAD, packed.length - off);
-
-				// pkt-line length = 4 + 1(band) + n
-				int totalLen = 4 + 1 + n;
-				String lenHex = String.format("%04x", totalLen);
-				out.write(lenHex.getBytes(StandardCharsets.US_ASCII));
-				out.write(0x01); // band 1 = pack data
-				out.write(packed, off, n);
-				off += n;
-			}
-
-			ProtocolV1.writeFlush(out);
-			return out.toByteArray();
+			return ProtocolV1.encodePackResponse(out.toByteArray(), objects);
 		}
 		catch (Exception e)
 		{

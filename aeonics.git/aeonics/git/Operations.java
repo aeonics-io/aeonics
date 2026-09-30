@@ -277,7 +277,8 @@ public class Operations
 	 * firstCommon = first commit encountered on any wants-path that belongs to the have-commit closure.
 	 * - Treat only commits (and peeled tag targets) as frontier markers.
 	 * - Include tag objects requested, but do not cross into targets that are already in the frontier.
-	 * - Include all tree/subtree/blob objects for any included commit->s tree, unless already in have-object closure.
+	 * - Include all tree/subtree/blob objects for any included commit->s tree, unless reachable from the tree of a have commit.
+	 *   Objects the client only holds in older history (e.g. a reverted file) are sent again, which is harmless.
 	 */
 	public static Tuple<String, List<Tuple<String, byte[]>>> pull(Storage.Type store, String root, Set<String> wants, Set<String> haves)
 	{
@@ -298,6 +299,11 @@ public class Operations
 				Tuple<String, byte[]> object = Bare.object(store, root, sha);
 				return object == null || !object.a.equals("commit");
 			});
+
+			// the trees and blobs the client already holds through its have commits
+			Set<String> known = new HashSet<>();
+			for( String sha : haves )
+				collectTree(store, root, Bare.parseCommitHeaders(Bare.object(store, root, sha).b).a, known);
 
 			// find ancestors of haves
 			Deque<String> work = new ArrayDeque<>(haves);
@@ -323,6 +329,7 @@ public class Operations
 				if( delta.containsKey(sha) ) continue;
 				if( haves.contains(sha) ) { ack = sha; continue; }
 				if( ancestors.contains(sha) ) continue;
+				if( known.contains(sha) ) continue;
 
 				Tuple<String, byte[]> object = Bare.object(store, root, sha);
 				if( object == null ) throw new IllegalArgumentException("Unknown requested object");
@@ -381,6 +388,48 @@ public class Operations
 		}
 
 		return Tuple.of(ack, new ArrayList<>(delta.values()));
+	}
+
+	/**
+	 * Collects the sha of a tree and of every tree and blob below it. Blobs are never read, and a
+	 * subtree already collected is not walked again since the same sha means the same content.
+	 *
+	 * @param store the storage backend
+	 * @param root the root path of the bare Git repository
+	 * @param tree the sha of the tree to walk, or null
+	 * @param known receives the collected shas
+	 */
+	private static void collectTree(Storage.Type store, String root, String tree, Set<String> known)
+	{
+		Deque<String> work = new ArrayDeque<>();
+		if( tree != null && known.add(tree) ) work.push(tree);
+
+		while( !work.isEmpty() )
+		{
+			Tuple<String, byte[]> object = Bare.object(store, root, work.pop());
+			if( object == null || !"tree".equals(object.a) ) continue;
+
+			byte[] data = object.b;
+			for( int i = 0; i < data.length; )
+			{
+				int mark = i;
+				while( i < data.length && data[i] != ' ' ) i++;
+				if( i >= data.length ) break;
+				String mode = new String(data, mark, i - mark, StandardCharsets.US_ASCII);
+				i++;
+				while( i < data.length && data[i] != 0 ) i++;
+				if( i >= data.length ) break;
+				i++;
+				if( i + 20 > data.length ) break;
+
+				String sha = Bare.sha2hex(data, i);
+				i += 20;
+
+				// some clients omit the leading zero of the directory mode
+				if( known.add(sha) && (mode.equals("40000") || mode.equals("040000")) )
+					work.push(sha);
+			}
+		}
 	}
 
 }
